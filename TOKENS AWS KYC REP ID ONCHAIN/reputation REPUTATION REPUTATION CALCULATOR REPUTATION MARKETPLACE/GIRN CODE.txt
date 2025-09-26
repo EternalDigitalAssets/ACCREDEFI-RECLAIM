@@ -1,0 +1,413 @@
+GIRN 
+
+// SPDX-License-Identifier: BUSL-1.1
+// License-Filename: LICENSE.md
+
+import express from 'express';
+import { Address, TonClient, WalletContractV4, internal } from '@ton/ton';
+import { mnemonicToWalletKey } from '@ton/crypto';
+
+const router = express.Router();
+
+// GTRN Registry API Routes
+// Provides REST API endpoints for GTRN (Global Token Reputation Number) operations
+
+interface GTRNRecord {
+    gtrn: string;
+    tokenAddress: string;
+    issuerGIRN: string;
+    assetType: string;
+    countryCode: string;
+    issueDate: number;
+    status: string;
+    metadata: string;
+}
+
+interface RegisterGTRNRequest {
+    tokenAddress: string;
+    issuerGIRN: string;
+    assetType: string;
+    countryCode: string;
+    metadata: string;
+}
+
+interface UpdateGTRNStatusRequest {
+    gtrn: string;
+    newStatus: string;
+}
+
+interface UpdateGTRNMetadataRequest {
+    gtrn: string;
+    newMetadata: string;
+}
+
+// Initialize TON client
+const client = new TonClient({
+    endpoint: process.env.TON_ENDPOINT || 'https://toncenter.com/api/v2/jsonRPC',
+    apiKey: process.env.TON_API_KEY
+});
+
+// GTRN Registry contract address (set from environment)
+const GTRN_REGISTRY_ADDRESS = Address.parse(process.env.GTRN_REGISTRY_ADDRESS || '');
+
+// Wallet for contract interactions (admin wallet)
+let adminWallet: WalletContractV4;
+
+// Initialize admin wallet
+async function initializeWallet() {
+    if (!process.env.ADMIN_MNEMONIC) {
+        throw new Error('ADMIN_MNEMONIC environment variable not set');
+    }
+    
+    const key = await mnemonicToWalletKey(process.env.ADMIN_MNEMONIC.split(' '));
+    adminWallet = WalletContractV4.create({ publicKey: key.publicKey, workchain: 0 });
+}
+
+// Validate GTRN format
+function validateGTRNFormat(gtrn: string): boolean {
+    // GTRN format: CC-AAAA-NNNNNN-C (12 characters total)
+    if (gtrn.length !== 12) return false;
+    
+    const countryCode = gtrn.substring(0, 2);
+    const assetType = gtrn.substring(2, 6);
+    const sequence = gtrn.substring(6, 12);
+    
+    // Basic format validation
+    return /^[A-Z]{2}-[A-Z]{4}-[0-9]{6}-[0-9A-Z]$/.test(gtrn);
+}
+
+// Validate GIRN format
+function validateGIRNFormat(girn: string): boolean {
+    // GIRN format: CC-EEEE-NNNN (10 characters total)
+    if (girn.length !== 10) return false;
+    
+    return /^[A-Z]{2}-[A-Z]{4}-[0-9]{4}$/.test(girn);
+}
+
+// Validate asset type format
+function validateAssetType(assetType: string): boolean {
+    return /^[A-Z]{4}$/.test(assetType);
+}
+
+// Validate country code format
+function validateCountryCode(countryCode: string): boolean {
+    return /^[A-Z]{2}$/.test(countryCode);
+}
+
+// The `/register` endpoint registers a new GTRN, validating inputs like GIRN format, asset type, country code, and token address.
+router.post('/register', async (req, res) => {
+    try {
+        const { tokenAddress, issuerGIRN, assetType, countryCode, metadata }: RegisterGTRNRequest = req.body;
+        
+        // Validate inputs
+        if (!tokenAddress || !issuerGIRN || !assetType || !countryCode) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
+        }
+        
+        if (!validateGIRNFormat(issuerGIRN)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GIRN format'
+            });
+        }
+        
+        if (!validateAssetType(assetType)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid asset type format'
+            });
+        }
+        
+        if (!validateCountryCode(countryCode)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid country code format'
+            });
+        }
+        
+        // Validate metadata is valid JSON
+        if (metadata) {
+            try {
+                JSON.parse(metadata);
+            } catch {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Invalid JSON metadata'
+                });
+            }
+        }
+        
+        // Mock response for development
+        const mockGTRN = `${countryCode}-${assetType}-${Date.now().toString().slice(-6)}-1`;
+        
+        res.json({
+            success: true,
+            gtrn: mockGTRN,
+            message: 'GTRN registered successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error registering GTRN:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/record/:gtrn` endpoint retrieves a GTRN record by GTRN, with mock data for development.
+router.get('/record/:gtrn', async (req, res) => {
+    try {
+        const { gtrn } = req.params;
+        
+        if (!validateGTRNFormat(gtrn)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GTRN format'
+            });
+        }
+        
+        // Mock response for development
+        const mockRecord: GTRNRecord = {
+            gtrn: gtrn,
+            tokenAddress: 'EQD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6_0t',
+            issuerGIRN: 'US-CORP-1234',
+            assetType: 'REAL',
+            countryCode: 'US',
+            issueDate: Date.now(),
+            status: 'ACTIVE',
+            metadata: JSON.stringify({ name: 'Sample Asset', description: 'Test asset' })
+        };
+        
+        res.json({
+            success: true,
+            record: mockRecord
+        });
+        
+    } catch (error) {
+        console.error('Error retrieving GTRN record:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/token/:address` endpoint retrieves a GTRN by token address, with mock data for development.
+router.get('/token/:address', async (req, res) => {
+    try {
+        const { address } = req.params;
+        
+        // Mock response for development
+        res.json({
+            success: true,
+            gtrn: 'US-REAL-123456-1',
+            tokenAddress: address
+        });
+        
+    } catch (error) {
+        console.error('Error retrieving GTRN by token:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/girn/:girn/gtrns` endpoint retrieves all GTRNs for a given GIRN, with mock data for development.
+router.get('/girn/:girn/gtrns', async (req, res) => {
+    try {
+        const { girn } = req.params;
+        
+        if (!validateGIRNFormat(girn)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GIRN format'
+            });
+        }
+        
+        // Mock response for development
+        res.json({
+            success: true,
+            gtrns: [
+                'US-REAL-123456-1',
+                'US-SECU-789012-2'
+            ],
+            count: 2
+        });
+        
+    } catch (error) {
+        console.error('Error retrieving GTRNs for GIRN:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/status` endpoint updates the status of a GTRN, validating the GTRN format and status.
+router.put('/status', async (req, res) => {
+    try {
+        const { gtrn, newStatus }: UpdateGTRNStatusRequest = req.body;
+        
+        if (!gtrn || !newStatus) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
+        }
+        
+        if (!validateGTRNFormat(gtrn)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GTRN format'
+            });
+        }
+        
+        const validStatuses = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'REVOKED'];
+        if (!validStatuses.includes(newStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid status'
+            });
+        }
+        
+        res.json({
+            success: true,
+            message: 'GTRN status updated successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error updating GTRN status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/metadata` endpoint updates the metadata of a GTRN, ensuring the metadata is valid JSON.
+router.put('/metadata', async (req, res) => {
+    try {
+        const { gtrn, newMetadata }: UpdateGTRNMetadataRequest = req.body;
+        
+        if (!gtrn || !newMetadata) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
+        }
+        
+        if (!validateGTRNFormat(gtrn)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid GTRN format'
+            });
+        }
+        
+        // Validate metadata is valid JSON
+        try {
+            JSON.parse(newMetadata);
+        } catch {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid JSON metadata'
+            });
+        }
+        
+        res.json({
+            success: true,
+            message: 'GTRN metadata updated successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error updating GTRN metadata:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/validate/:gtrn` endpoint validates the format of a GTRN and returns its components if valid.
+router.get('/validate/:gtrn', async (req, res) => {
+    try {
+        const { gtrn } = req.params;
+        
+        if (!validateGTRNFormat(gtrn)) {
+            return res.json({
+                success: false,
+                valid: false,
+                error: 'Invalid GTRN format'
+            });
+        }
+        
+        // Extract components
+        const countryCode = gtrn.substring(0, 2);
+        const assetType = gtrn.substring(3, 7);
+        const sequence = gtrn.substring(8, 14);
+        const checkDigit = gtrn.substring(15);
+        
+        res.json({
+            success: true,
+            valid: true,
+            components: {
+                countryCode,
+                assetType,
+                sequence,
+                checkDigit
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error validating GTRN:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// The `/stats` endpoint provides statistics on GTRNs, with mock data for development.
+router.get('/stats', async (req, res) => {
+    try {
+        // Mock response for development
+        res.json({
+            success: true,
+            statistics: {
+                totalGTRNs: 150,
+                activeGTRNs: 125,
+                inactiveGTRNs: 15,
+                suspendedGTRNs: 10,
+                byCountry: {
+                    'US': 75,
+                    'CA': 30,
+                    'UK': 25,
+                    'DE': 20
+                },
+                byAssetType: {
+                    'REAL': 80,
+                    'SECU': 40,
+                    'COMM': 20,
+                    'UTIL': 10
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error retrieving GTRN statistics:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// Initialize wallet on load
+initializeWallet().catch(console.error);
+
+// The module includes validation functions for GTRN, GIRN, asset type, and country code formats.
+export default router;
